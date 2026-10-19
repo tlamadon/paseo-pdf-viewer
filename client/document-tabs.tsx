@@ -3,6 +3,7 @@ import type { PluginClientContext, PluginWorkspacePanelProps } from "@getpaseo/p
 import { documentPanelId, listDocuments, openDocument } from "../shared/documents";
 import { baseName } from "./pdf-picker";
 import { PdfViewer } from "./pdf-viewer";
+import { readCachedDocuments, writeCachedDocuments } from "./web";
 
 export interface DocumentTabs {
   // Opens the PDF in its own tab, or focuses the tab already showing it.
@@ -34,25 +35,31 @@ export function createDocumentTabs(client: PluginClientContext): DocumentTabs {
     return id;
   }
 
-  function forget(absolutePath: string): void {
-    const id = documentPanelId(absolutePath);
-    void panels.get(id)?.();
-    panels.delete(id);
+  // Match the registered panels to the daemon's list and keep the synchronous copy current.
+  function sync(absolutePaths: string[]): void {
+    const keep = new Set(absolutePaths.map(register));
+    for (const [id, remove] of panels) {
+      if (keep.has(id)) continue;
+      void remove();
+      panels.delete(id);
+    }
+    writeCachedDocuments(absolutePaths);
   }
 
-  // Re-register remembered documents so tabs the app restores after a reload have a panel.
+  // Paseo resolves a restored tab's panel when the tab first renders, which happens before any
+  // RPC can answer, so register the cached list now and reconcile with the daemon afterwards.
+  // Native clients have no cache; their restored tabs recover once the tab is reopened.
+  for (const absolutePath of readCachedDocuments()) register(absolutePath);
   client
     .rpc(listDocuments, {})
-    .then(({ absolutePaths }) => {
-      for (const absolutePath of absolutePaths) register(absolutePath);
-    })
+    .then(({ absolutePaths }) => sync(absolutePaths))
     .catch((error) => console.warn("[pdf-viewer] Could not restore PDF tabs", error));
 
   return {
     async open(workspaceId, directory, path) {
-      const { absolutePath, forgotten } = await client.rpc(openDocument, { directory, path });
-      for (const old of forgotten) forget(old);
-      await openPanelWhenRegistered(client, register(absolutePath), workspaceId);
+      const { absolutePath, remembered } = await client.rpc(openDocument, { directory, path });
+      sync(remembered);
+      await openPanelWhenRegistered(client, documentPanelId(absolutePath), workspaceId);
     },
     dispose() {
       disposed = true;

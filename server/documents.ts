@@ -14,7 +14,9 @@ const stateFile = path.join(
 async function readRemembered(): Promise<string[]> {
   try {
     const parsed: unknown = JSON.parse(await readFile(stateFile, "utf8"));
-    return Array.isArray(parsed) ? parsed.filter((entry): entry is string => typeof entry === "string") : [];
+    return Array.isArray(parsed)
+      ? parsed.filter((entry): entry is string => typeof entry === "string").slice(0, MAX_REMEMBERED_DOCUMENTS)
+      : [];
   } catch {
     return [];
   }
@@ -34,10 +36,12 @@ export async function openPdfDocument({
   if (!info?.isFile()) throw new Error(`No such PDF: ${absolutePath}`);
 
   // Most recent first; the oldest fall off the end.
-  const remembered = [absolutePath, ...(await readRemembered()).filter((entry) => entry !== absolutePath)];
-  const forgotten = remembered.splice(MAX_REMEMBERED_DOCUMENTS);
+  const remembered = [absolutePath, ...(await readRemembered()).filter((entry) => entry !== absolutePath)].slice(
+    0,
+    MAX_REMEMBERED_DOCUMENTS,
+  );
   await writeRemembered(remembered);
-  return { absolutePath, forgotten };
+  return { absolutePath, remembered };
 }
 
 export async function listRememberedDocuments(

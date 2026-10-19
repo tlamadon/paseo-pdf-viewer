@@ -2,16 +2,17 @@ import { defineRpc } from "@getpaseo/plugin";
 import { z } from "zod";
 
 // Each opened PDF gets its own workspace panel, so the app gives it its own tab. The daemon
-// remembers them so tabs restored after an app reload find their panel again.
-export const MAX_REMEMBERED_DOCUMENTS = 30;
+// remembers them so tabs restored after an app reload find their panel again. Registered panels
+// also appear in the New tab menu, so the list doubles as recent PDFs and stays short.
+export const MAX_REMEMBERED_DOCUMENTS = 10;
 
 export const openDocument = defineRpc({
   name: "pdf.documents.open",
   input: z.object({ directory: z.string(), path: z.string() }),
   output: z.object({
     absolutePath: z.string(),
-    // Documents pushed out of the remembered list; their panels should be removed.
-    forgotten: z.array(z.string()),
+    // The remembered list after this open, most recent first.
+    remembered: z.array(z.string()),
   }),
 });
 

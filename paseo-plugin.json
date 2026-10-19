@@ -2,6 +2,10 @@
   "id": "pdf-viewer",
   "name": "PDF viewer",
   "description": "View PDF files from a workspace in Paseo, one tab per document.",
+  "media": [
+    "assets/screenshot-desktop.png",
+    "assets/screenshot-mobile.png"
+  ],
   "build": [
     [
       "npm",
