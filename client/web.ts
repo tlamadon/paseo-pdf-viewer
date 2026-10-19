@@ -28,3 +28,35 @@ export function writeCachedDocuments(absolutePaths: string[]): void {
     // Storage can be full or disabled; the daemon's list still restores tabs on the next mount.
   }
 }
+
+declare const document:
+  | {
+      createElement(tag: "a"): { href: string; download: string; click(): void; remove(): void };
+      body: { appendChild(node: unknown): void };
+    }
+  | undefined;
+
+// Browser versions of these globals; the Node typings describe different shapes.
+const browser = globalThis as unknown as {
+  Blob: new (parts: Uint8Array[], options: { type: string }) => object;
+  URL: { createObjectURL(blob: object): string; revokeObjectURL(url: string): void };
+};
+
+// Starts a browser download of base64 content. Only meaningful on web and desktop clients.
+export function saveFileOnWeb(name: string, mimeType: string, base64: string): void {
+  if (Platform.OS !== "web" || typeof document === "undefined") {
+    throw new Error("Downloads need the desktop or web app");
+  }
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
+  const url = browser.URL.createObjectURL(new browser.Blob([bytes], { type: mimeType }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  // Revoking right away can cancel the download in some browsers.
+  setTimeout(() => browser.URL.revokeObjectURL(url), 60_000);
+}

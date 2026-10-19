@@ -1,11 +1,18 @@
 import type { Dirent } from "node:fs";
-import { readFile, readdir, stat } from "node:fs/promises";
+import { open, readFile, readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { RpcInput, RpcOutput } from "@getpaseo/plugin";
 import type * as Mupdf from "mupdf";
-import type { listPdfs, pdfInfo, renderPage } from "../shared/pdf";
+import {
+  DOWNLOAD_CHUNK_BYTES,
+  type listPdfs,
+  MAX_DOWNLOAD_BYTES,
+  type pdfInfo,
+  type readPdfChunk,
+  type renderPage,
+} from "../shared/pdf";
 import { PLUGIN_ROOT } from "./plugin-root.generated";
 
 // Paseo bundles server code into one evaluated script, so mupdf (ESM with a sibling .wasm file)
@@ -86,6 +93,32 @@ export async function renderPdfPage(input: RpcInput<typeof renderPage>): Promise
   pixmap.destroy();
   page.destroy();
   return remember(renderedPages, key, result, MAX_RENDERED_PAGES);
+}
+
+export async function readPdfFileChunk(
+  input: RpcInput<typeof readPdfChunk>,
+): Promise<RpcOutput<typeof readPdfChunk>> {
+  const absolutePath = resolvePdfPath(input.directory, input.path);
+  const file = await open(absolutePath, "r").catch(() => null);
+  if (!file) throw new Error(`No such PDF: ${absolutePath}`);
+  try {
+    const info = await file.stat();
+    if (info.size > MAX_DOWNLOAD_BYTES) throw new Error("PDF is too large to download through Paseo");
+    if (input.mtimeMs !== undefined && input.mtimeMs !== info.mtimeMs) {
+      throw new Error("The PDF changed during the download. Try again.");
+    }
+    const length = Math.max(0, Math.min(DOWNLOAD_CHUNK_BYTES, info.size - input.offset));
+    const buffer = Buffer.alloc(length);
+    const { bytesRead } = await file.read(buffer, 0, length, input.offset);
+    return {
+      name: path.basename(absolutePath),
+      size: info.size,
+      mtimeMs: info.mtimeMs,
+      base64: buffer.subarray(0, bytesRead).toString("base64"),
+    };
+  } finally {
+    await file.close();
+  }
 }
 
 interface OpenDocument {

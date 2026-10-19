@@ -7,6 +7,7 @@ A [Paseo](https://paseo.sh) plugin that shows PDF files from a workspace, one ta
 - **Explorer list (desktop):** a PDFs tab in the Explorer lists the workspace's PDFs, newest first. Click one to open it in its own tab; clicking an open document focuses its tab.
 - **`/pdf [path]`:** with a path, opens that PDF; without one, shows the list. Paths can be workspace-relative, absolute, or `~/...`.
 - **Phones:** the list opens as a regular tab, since the phone layout's Explorer has no plugin tabs.
+- **Download:** saves the PDF to your device: a browser download on desktop and web, the share sheet on iOS (Save to Files, Mail, ...). Not available on Android, where React Native's share sheet only takes text.
 - **Live reload:** an open PDF redraws when the file changes, so it works well next to `typst watch` or `latexmk -pvc`.
 
 ## Install

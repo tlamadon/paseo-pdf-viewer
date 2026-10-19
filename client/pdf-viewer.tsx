@@ -1,6 +1,6 @@
 import type { PluginTheme } from "@getpaseo/plugin";
 import { useRpc } from "@getpaseo/plugin/client";
-import { Icon } from "@getpaseo/plugin/client/react-native";
+import { Icon, useToast } from "@getpaseo/plugin/client/react-native";
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useMemo, useRef, useState } from "react";
 import {
@@ -9,13 +9,15 @@ import {
   Image,
   type LayoutChangeEvent,
   PixelRatio,
+  Platform,
   Pressable,
   ScrollView,
   Text,
   View,
   type ViewToken,
 } from "react-native";
-import { pdfInfo, renderPage } from "../shared/pdf";
+import { pdfInfo, readPdfChunk, renderPage } from "../shared/pdf";
+import { canDownload, downloadPdf } from "./download";
 import { baseName } from "./pdf-picker";
 
 const ZOOM_STEPS = [0.5, 0.75, 1, 1.25, 1.5, 2, 3];
@@ -42,6 +44,9 @@ export function PdfViewer({ theme, compact, directory, path, onClose }: PdfViewe
     // next poll recovers, so retries would only add noise.
     retry: false,
   });
+  const readChunk = useRpc(readPdfChunk);
+  const toast = useToast();
+  const [downloading, setDownloading] = useState(false);
   const [zoomIndex, setZoomIndex] = useState(ZOOM_STEPS.indexOf(1));
   const [viewportWidth, setViewportWidth] = useState(0);
   const [currentPage, setCurrentPage] = useState(0);
@@ -73,6 +78,17 @@ export function PdfViewer({ theme, compact, directory, path, onClose }: PdfViewe
 
   const title = info.data?.title || baseName(path);
 
+  async function download() {
+    setDownloading(true);
+    try {
+      await downloadPdf(readChunk, directory, path);
+    } catch (error) {
+      toast.error(errorMessage(error));
+    } finally {
+      setDownloading(false);
+    }
+  }
+
   return (
     <View style={styles.screen}>
       <View style={styles.toolbar}>
@@ -100,6 +116,17 @@ export function PdfViewer({ theme, compact, directory, path, onClose }: PdfViewe
           disabled={zoomIndex === ZOOM_STEPS.length - 1}
           onPress={() => setZoomIndex((index) => Math.min(ZOOM_STEPS.length - 1, index + 1))}
         />
+        {canDownload &&
+          (downloading ? (
+            <ActivityIndicator style={styles.downloadSpinner} color={theme.colors.foregroundMuted} />
+          ) : (
+            <ToolbarButton
+              theme={theme}
+              icon={Platform.OS === "web" ? "Download" : "Share"}
+              label={Platform.OS === "web" ? "Download PDF" : "Share or save PDF"}
+              onPress={download}
+            />
+          ))}
       </View>
       {info.isError && !info.data ? (
         <View style={styles.message}>
@@ -242,6 +269,7 @@ function viewerStyles(theme: PluginTheme, compact: boolean) {
     zoomLabel: { minWidth: 36, textAlign: "center" as const },
     viewport: { flex: 1, backgroundColor: colors.surface2 },
     spinner: { marginTop: 32 },
+    downloadSpinner: { width: 28, height: 28 },
     message: { padding: 16 },
     error: { color: colors.statusDanger, fontSize: 13 },
   };

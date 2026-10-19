@@ -35,3 +35,17 @@ export const renderPage = defineRpc({
   }),
   output: z.object({ uri: z.string(), width: z.number(), height: z.number() }),
 });
+
+// Base64 pieces concatenate cleanly only when every piece but the last is a multiple of 3 bytes.
+export const DOWNLOAD_CHUNK_BYTES = 3 * 350_000;
+export const MAX_DOWNLOAD_BYTES = 100 * 1024 * 1024;
+
+export const readPdfChunk = defineRpc({
+  name: "pdf.chunk",
+  input: fileRef.extend({
+    offset: z.number().int().min(0),
+    // Every piece of one download must come from the same version of the file.
+    mtimeMs: z.number().optional(),
+  }),
+  output: z.object({ name: z.string(), size: z.number(), mtimeMs: z.number(), base64: z.string() }),
+});
