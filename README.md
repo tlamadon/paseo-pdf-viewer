@@ -14,8 +14,16 @@ A [Paseo](https://paseo.sh) plugin that shows PDF files from a workspace, one ta
 
 Plugins must be enabled on the daemon (Settings → Plugins, or `"pluginsEnabled": true` in the daemon's `config.json`). Then:
 
+Install the reviewed version from the [Paseo plugin directory](https://paseo.sh/plugins/tlamadon/pdf-viewer):
+
 ```sh
-paseo plugin install git:tlamadon/paseo-pdf-viewer
+paseo plugin add tlamadon/pdf-viewer
+```
+
+Or install the latest code straight from GitHub:
+
+```sh
+paseo plugin add git:tlamadon/paseo-pdf-viewer
 ```
 
 The daemon needs `npm` on its `PATH`: installation runs `npm ci` to fetch the `mupdf` WebAssembly package. Supported Paseo versions: `>=0.11.2 <0.13.0`.
