@@ -12,7 +12,7 @@ A [Paseo](https://paseo.sh) plugin that shows PDF files from a workspace, one ta
 
 ## Install
 
-Plugins must be enabled on the daemon (Settings → Plugins, or `"pluginsEnabled": true` in the daemon's `config.json`). Then:
+Plugins must be enabled on the daemon (Settings → Plugins, or `"pluginsEnabled": true` in the daemon's `config.json`).
 
 Install the reviewed version from the [Paseo plugin directory](https://paseo.sh/plugins/tlamadon/pdf-viewer):
 
