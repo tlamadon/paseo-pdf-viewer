@@ -2,12 +2,14 @@ import type { PluginTheme } from "@getpaseo/plugin";
 import { useRpc } from "@getpaseo/plugin/client";
 import { Icon, useToast } from "@getpaseo/plugin/client/react-native";
 import { useQuery } from "@tanstack/react-query";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   FlatList,
   Image,
   type LayoutChangeEvent,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
   PixelRatio,
   Platform,
   Pressable,
@@ -19,6 +21,7 @@ import {
 import { pdfInfo, readPdfChunk, renderPage } from "../shared/pdf";
 import { canDownload, downloadPdf } from "./download";
 import { baseName } from "./pdf-picker";
+import { readPosition, writePosition } from "./positions";
 
 const ZOOM_STEPS = [0.5, 0.75, 1, 1.25, 1.5, 2, 3];
 const PAGE_GAP = 12;
@@ -47,9 +50,16 @@ export function PdfViewer({ theme, compact, workspaceId, path, onClose }: PdfVie
   const readChunk = useRpc(readPdfChunk);
   const toast = useToast();
   const [downloading, setDownloading] = useState(false);
-  const [zoomIndex, setZoomIndex] = useState(ZOOM_STEPS.indexOf(1));
+  const positionKey = `${workspaceId}|${path}`;
+  const [saved] = useState(() => readPosition(positionKey));
+  const [zoomIndex, setZoomIndex] = useState(saved?.zoomIndex ?? ZOOM_STEPS.indexOf(1));
   const [viewportWidth, setViewportWidth] = useState(0);
-  const [currentPage, setCurrentPage] = useState(0);
+  const [currentPage, setCurrentPage] = useState(saved?.page ?? 0);
+  const listRef = useRef<FlatList<number>>(null);
+  // The reading position, kept as a page and a fraction of it so it survives relayouts.
+  const anchor = useRef({ page: saved?.page ?? 0, fraction: saved?.fraction ?? 0 });
+  // Ignores the scroll events our own scrollToOffset produces.
+  const restoring = useRef(false);
   const styles = useMemo(() => viewerStyles(theme, compact), [theme, compact]);
 
   const zoom = ZOOM_STEPS[zoomIndex];
@@ -66,6 +76,44 @@ export function PdfViewer({ theme, compact, workspaceId, path, onClose }: PdfVie
     }
     return result;
   }, [aspects, pageWidth]);
+
+  // Whenever the page layout changes (first render, zoom, resize), scroll back to the anchor.
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    if (!list || offsets.length === 0) return;
+    const page = Math.min(anchor.current.page, offsets.length - 1);
+    const length = pageWidth / aspects[page] + PAGE_GAP;
+    restoring.current = true;
+    list.scrollToOffset({ offset: padding + offsets[page] + anchor.current.fraction * length, animated: false });
+    setCurrentPage(page);
+    const release = setTimeout(() => {
+      restoring.current = false;
+    }, 150);
+    return () => clearTimeout(release);
+  }, [offsets, aspects, pageWidth, padding]);
+
+  useEffect(() => {
+    writePosition(positionKey, { ...anchor.current, zoomIndex });
+  }, [positionKey, zoomIndex]);
+
+  const onScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      if (restoring.current || offsets.length === 0) return;
+      const y = Math.max(0, event.nativeEvent.contentOffset.y - padding);
+      let page = 0;
+      for (let low = 0, high = offsets.length - 1; low <= high; ) {
+        const middle = (low + high) >> 1;
+        if (offsets[middle] <= y) {
+          page = middle;
+          low = middle + 1;
+        } else high = middle - 1;
+      }
+      const length = pageWidth / aspects[page] + PAGE_GAP;
+      anchor.current = { page, fraction: Math.min(1, (y - offsets[page]) / length) };
+      writePosition(positionKey, { ...anchor.current, zoomIndex });
+    },
+    [offsets, aspects, pageWidth, padding, positionKey, zoomIndex],
+  );
 
   const onLayout = useCallback((event: LayoutChangeEvent) => {
     setViewportWidth(Math.floor(event.nativeEvent.layout.width));
@@ -139,6 +187,9 @@ export function PdfViewer({ theme, compact, workspaceId, path, onClose }: PdfVie
           ) : (
             <ScrollView horizontal contentContainerStyle={{ minWidth: viewportWidth }}>
               <FlatList
+                ref={listRef}
+                onScroll={onScroll}
+                scrollEventThrottle={100}
                 style={{ width: Math.max(viewportWidth, pageWidth + 2 * padding) }}
                 contentContainerStyle={{ padding }}
                 data={aspects}
