@@ -8,7 +8,7 @@ export const MAX_REMEMBERED_DOCUMENTS = 10;
 
 export const openDocument = defineRpc({
   name: "pdf.documents.open",
-  input: z.object({ directory: z.string(), path: z.string() }),
+  input: z.object({ workspaceId: z.string(), path: z.string() }),
   output: z.object({
     absolutePath: z.string(),
     // The remembered list after this open, most recent first.

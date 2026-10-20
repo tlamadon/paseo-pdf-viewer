@@ -9,7 +9,7 @@ import { listPdfs } from "../shared/pdf";
 interface PdfPickerProps {
   theme: PluginTheme;
   compact: boolean;
-  directory: string;
+  workspaceId: string;
   // The file open in the viewer, highlighted in the list.
   activePath?: string | null;
   onOpen(path: string): void;
@@ -18,11 +18,11 @@ interface PdfPickerProps {
 // Rescan now and then so freshly built PDFs show up without pressing refresh.
 const RESCAN_INTERVAL_MS = 15000;
 
-export function PdfPicker({ theme, compact, directory, activePath, onOpen }: PdfPickerProps) {
+export function PdfPicker({ theme, compact, workspaceId, activePath, onOpen }: PdfPickerProps) {
   const list = useRpc(listPdfs);
   const files = useQuery({
-    queryKey: ["pdf.list", directory],
-    queryFn: () => list({ directory }),
+    queryKey: ["pdf.list", workspaceId],
+    queryFn: () => list({ workspaceId }),
     refetchInterval: RESCAN_INTERVAL_MS,
   });
   const [filter, setFilter] = useState("");

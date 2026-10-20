@@ -7,7 +7,7 @@ import { readCachedDocuments, writeCachedDocuments } from "./web";
 
 export interface DocumentTabs {
   // Opens the PDF in its own tab, or focuses the tab already showing it.
-  open(workspaceId: string, directory: string, path: string): Promise<void>;
+  open(workspaceId: string, path: string): Promise<void>;
   dispose(): void;
 }
 
@@ -18,8 +18,8 @@ export function createDocumentTabs(client: PluginClientContext): DocumentTabs {
   function register(absolutePath: string): string {
     const id = documentPanelId(absolutePath);
     if (!panels.has(id) && !disposed) {
-      function DocumentPanel({ theme, layout }: PluginWorkspacePanelProps) {
-        return <PdfViewer theme={theme} compact={layout.compact} directory="/" path={absolutePath} />;
+      function DocumentPanel({ theme, layout, workspaceId }: PluginWorkspacePanelProps) {
+        return <PdfViewer theme={theme} compact={layout.compact} workspaceId={workspaceId} path={absolutePath} />;
       }
       panels.set(
         id,
@@ -56,8 +56,8 @@ export function createDocumentTabs(client: PluginClientContext): DocumentTabs {
     .catch((error) => console.warn("[pdf-viewer] Could not restore PDF tabs", error));
 
   return {
-    async open(workspaceId, directory, path) {
-      const { absolutePath, remembered } = await client.rpc(openDocument, { directory, path });
+    async open(workspaceId, path) {
+      const { absolutePath, remembered } = await client.rpc(openDocument, { workspaceId, path });
       sync(remembered);
       await openPanelWhenRegistered(client, documentPanelId(absolutePath), workspaceId);
     },

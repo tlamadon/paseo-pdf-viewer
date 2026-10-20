@@ -2,6 +2,8 @@ import type { PluginClientContext } from "@getpaseo/plugin/client";
 import { createDocumentTabs } from "./client/document-tabs";
 import { createPdfFilesPanel } from "./client/pdf-files-panel";
 import { openListPanel } from "./client/placement";
+import { createTurnCard } from "./client/turn-card";
+import { TURN_CARD_KIND, TURN_CARD_VERSION, turnCardSchema } from "./shared/turn-cards";
 
 export default function contribute(client: PluginClientContext) {
   const tabs = createDocumentTabs(client);
@@ -30,7 +32,7 @@ export default function contribute(client: PluginClientContext) {
     argumentHint: "[path]",
     context: "workspace",
     async onSubmit({ args, workspace, openPanel }) {
-      if (args) await tabs.open(workspace.id, workspace.directory, args);
+      if (args) await tabs.open(workspace.id, args);
       else openListPanel(openPanel);
     },
   });
@@ -43,6 +45,12 @@ export default function contribute(client: PluginClientContext) {
     onSelect({ openPanel }) {
       openListPanel(openPanel);
     },
+  });
+  client.addTimelineRenderer({
+    kind: TURN_CARD_KIND,
+    version: TURN_CARD_VERSION,
+    schema: turnCardSchema,
+    Component: createTurnCard(tabs),
   });
   return tabs.dispose;
 }

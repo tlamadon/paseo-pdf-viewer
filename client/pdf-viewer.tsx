@@ -28,17 +28,17 @@ const RELOAD_INTERVAL_MS = 2000;
 interface PdfViewerProps {
   theme: PluginTheme;
   compact: boolean;
-  directory: string;
+  workspaceId: string;
   path: string;
   // Shows a back button when the viewer replaces a file list.
   onClose?: () => void;
 }
 
-export function PdfViewer({ theme, compact, directory, path, onClose }: PdfViewerProps) {
+export function PdfViewer({ theme, compact, workspaceId, path, onClose }: PdfViewerProps) {
   const getInfo = useRpc(pdfInfo);
   const info = useQuery({
-    queryKey: ["pdf.info", directory, path],
-    queryFn: () => getInfo({ directory, path }),
+    queryKey: ["pdf.info", workspaceId, path],
+    queryFn: () => getInfo({ workspaceId, path }),
     refetchInterval: RELOAD_INTERVAL_MS,
     // A rebuild can briefly leave a half-written file. The last good data stays on screen and the
     // next poll recovers, so retries would only add noise.
@@ -81,7 +81,7 @@ export function PdfViewer({ theme, compact, directory, path, onClose }: PdfViewe
   async function download() {
     setDownloading(true);
     try {
-      await downloadPdf(readChunk, directory, path);
+      await downloadPdf(readChunk, workspaceId, path);
     } catch (error) {
       toast.error(errorMessage(error));
     } finally {
@@ -155,7 +155,7 @@ export function PdfViewer({ theme, compact, directory, path, onClose }: PdfViewe
                 renderItem={({ item: aspect, index }) => (
                   <PdfPage
                     theme={theme}
-                    directory={directory}
+                    workspaceId={workspaceId}
                     path={path}
                     mtimeMs={info.data.mtimeMs}
                     page={index}
@@ -174,7 +174,7 @@ export function PdfViewer({ theme, compact, directory, path, onClose }: PdfViewe
 
 interface PdfPageProps {
   theme: PluginTheme;
-  directory: string;
+  workspaceId: string;
   path: string;
   mtimeMs: number;
   page: number;
@@ -182,13 +182,13 @@ interface PdfPageProps {
   height: number;
 }
 
-function PdfPage({ theme, directory, path, mtimeMs, page, width, height }: PdfPageProps) {
+function PdfPage({ theme, workspaceId, path, mtimeMs, page, width, height }: PdfPageProps) {
   const render = useRpc(renderPage);
   // Round up to 100 device pixels so small resizes reuse cached renders.
   const renderWidth = Math.min(4000, Math.max(100, Math.ceil((width * PixelRatio.get()) / 100) * 100));
   const image = useQuery({
-    queryKey: ["pdf.page", directory, path, mtimeMs, page, renderWidth],
-    queryFn: () => render({ directory, path, page, width: renderWidth, mtimeMs }),
+    queryKey: ["pdf.page", workspaceId, path, mtimeMs, page, renderWidth],
+    queryFn: () => render({ workspaceId, path, page, width: renderWidth, mtimeMs }),
     staleTime: Number.POSITIVE_INFINITY,
     // After a rebuild or zoom change, keep the old image up until the new one arrives.
     placeholderData: (previous) => previous,

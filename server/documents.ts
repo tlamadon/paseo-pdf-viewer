@@ -2,8 +2,9 @@ import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 import type { RpcInput, RpcOutput } from "@getpaseo/plugin";
+import type { PluginHandlerContext } from "@getpaseo/plugin/server";
 import { type listDocuments, MAX_REMEMBERED_DOCUMENTS, type openDocument } from "../shared/documents";
-import { resolvePdfPath } from "./pdf";
+import { resolvePdf } from "./pdf";
 
 const stateFile = path.join(
   process.env.XDG_STATE_HOME || path.join(homedir(), ".local", "state"),
@@ -27,13 +28,13 @@ async function writeRemembered(absolutePaths: string[]): Promise<void> {
   await writeFile(stateFile, `${JSON.stringify(absolutePaths, null, 2)}\n`);
 }
 
-export async function openPdfDocument({
-  directory,
-  path: requested,
-}: RpcInput<typeof openDocument>): Promise<RpcOutput<typeof openDocument>> {
-  const absolutePath = resolvePdfPath(directory, requested);
+export async function openPdfDocument(
+  { workspaceId, path: requested }: RpcInput<typeof openDocument>,
+  { paseo }: PluginHandlerContext,
+): Promise<RpcOutput<typeof openDocument>> {
+  const absolutePath = await resolvePdf(paseo, workspaceId, requested);
   const info = await stat(absolutePath).catch(() => null);
-  if (!info?.isFile()) throw new Error(`No such PDF: ${absolutePath}`);
+  if (!info?.isFile()) throw new Error(`No such PDF: ${path.basename(absolutePath)}`);
 
   // Most recent first; the oldest fall off the end.
   const remembered = [absolutePath, ...(await readRemembered()).filter((entry) => entry !== absolutePath)].slice(

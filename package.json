@@ -1,6 +1,6 @@
 {
   "name": "paseo-pdf-viewer",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "View PDF files from a workspace in Paseo, one tab per document.",
   "license": "AGPL-3.0-or-later",
   "author": "Thibaut Lamadon",
@@ -17,7 +17,7 @@
     "paseo-plugin",
     "pdf",
     "viewer",
-    "mupdf"
+    "pdfium"
   ],
   "files": [
     "paseo-plugin.json",
@@ -28,11 +28,9 @@
     "index.server.ts",
     "client/",
     "server/",
-    "shared/",
-    "scripts/"
+    "shared/"
   ],
   "scripts": {
-    "prepare": "node scripts/prepare.mjs",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
@@ -46,7 +44,7 @@
     "zod": "^4.4.3"
   },
   "dependencies": {
-    "mupdf": "^1.28.1"
+    "@hyzyla/pdfium": "^3.0.0"
   },
   "type": "module"
 }

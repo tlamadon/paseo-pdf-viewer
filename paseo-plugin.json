@@ -12,10 +12,6 @@
       "ci",
       "--omit=dev",
       "--ignore-scripts"
-    ],
-    [
-      "node",
-      "scripts/prepare.mjs"
     ]
   ],
   "requirements": {

@@ -1,12 +1,13 @@
 import { defineRpc } from "@getpaseo/plugin";
 import { z } from "zod";
 
-// Paths are resolved by the daemon: absolute, `~/...`, or relative to `directory`.
-const fileRef = z.object({ directory: z.string(), path: z.string() });
+// The daemon resolves `path` inside the workspace's directory, relative or absolute, and refuses
+// anything outside it. Clients never name a directory.
+const fileRef = z.object({ workspaceId: z.string(), path: z.string() });
 
 export const listPdfs = defineRpc({
   name: "pdf.list",
-  input: z.object({ directory: z.string() }),
+  input: z.object({ workspaceId: z.string() }),
   output: z.object({
     files: z.array(z.object({ path: z.string(), size: z.number(), mtimeMs: z.number() })),
     truncated: z.boolean(),

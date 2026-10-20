@@ -1,10 +1,8 @@
 import type { Dirent } from "node:fs";
 import { open, readFile, readdir, stat } from "node:fs/promises";
-import { homedir } from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import type { RpcInput, RpcOutput } from "@getpaseo/plugin";
-import type * as Mupdf from "mupdf";
+import type { PluginHandlerContext } from "@getpaseo/plugin/server";
 import {
   DOWNLOAD_CHUNK_BYTES,
   type listPdfs,
@@ -13,27 +11,24 @@ import {
   type readPdfChunk,
   type renderPage,
 } from "../shared/pdf";
-import { PLUGIN_ROOT } from "./plugin-root.generated";
+import { closePdfium, openPdfium, renderPdfium, shutdownPdfium } from "./pdfium";
+import { resolveInWorkspace, workspaceRoot } from "./workspace";
 
-// Paseo bundles server code into one evaluated script, so mupdf (ESM with a sibling .wasm file)
-// cannot be bundled. Load it from the plugin's own node_modules at runtime instead.
-let mupdfModule: Promise<typeof Mupdf> | null = null;
-function loadMupdf(): Promise<typeof Mupdf> {
-  mupdfModule ??= import(
-    pathToFileURL(path.join(PLUGIN_ROOT, "node_modules/mupdf/dist/mupdf.js")).href
-  ) as Promise<typeof Mupdf>;
-  return mupdfModule;
-}
+type Context = PluginHandlerContext;
 
 const SKIPPED_DIRECTORIES = new Set(["node_modules", "target", "__pycache__"]);
 const MAX_LISTED = 500;
 const MAX_DEPTH = 8;
 
-export async function listPdfFiles({
-  directory,
-}: RpcInput<typeof listPdfs>): Promise<RpcOutput<typeof listPdfs>> {
-  const root = resolveDirectory(directory);
-  const files: RpcOutput<typeof listPdfs>["files"] = [];
+export interface ScannedPdf {
+  path: string;
+  size: number;
+  mtimeMs: number;
+}
+
+// PDFs under `root`, newest first, as workspace-relative paths. Skips hidden folders.
+export async function scanPdfs(root: string): Promise<{ files: ScannedPdf[]; truncated: boolean }> {
+  const files: ScannedPdf[] = [];
   let truncated = false;
 
   async function walk(dir: string, depth: number): Promise<void> {
@@ -64,43 +59,86 @@ export async function listPdfFiles({
   return { files, truncated };
 }
 
-export async function readPdfInfo(input: RpcInput<typeof pdfInfo>): Promise<RpcOutput<typeof pdfInfo>> {
-  const { absolutePath, mtimeMs, doc, aspects } = await openPdf(input.directory, input.path);
-  return { absolutePath, title: doc.getMetaData("info:Title") || null, mtimeMs, aspects };
+export async function listPdfFiles(
+  { workspaceId }: RpcInput<typeof listPdfs>,
+  { paseo }: Context,
+): Promise<RpcOutput<typeof listPdfs>> {
+  return scanPdfs(await workspaceRoot(paseo, workspaceId));
+}
+
+// The resolved, workspace-confined path of a PDF the client named.
+export async function resolvePdf(paseo: Context["paseo"], workspaceId: string, requested: string): Promise<string> {
+  const absolutePath = await resolveInWorkspace(await workspaceRoot(paseo, workspaceId), requested);
+  if (!isPdfName(absolutePath)) throw new Error(`Not a PDF file: ${path.basename(absolutePath)}`);
+  return absolutePath;
+}
+
+interface DocumentInfo {
+  key: string;
+  absolutePath: string;
+  mtimeMs: number;
+  title: string | null;
+  aspects: number[];
+}
+
+// Page sizes and titles, keyed by path and modification time, so polling for changes is cheap.
+const documentInfo = new Map<string, DocumentInfo>();
+const MAX_DOCUMENT_INFO = 20;
+
+async function loadDocument(paseo: Context["paseo"], workspaceId: string, requested: string): Promise<DocumentInfo> {
+  const absolutePath = await resolvePdf(paseo, workspaceId, requested);
+  const info = await stat(absolutePath).catch(() => null);
+  if (!info?.isFile()) throw new Error(`No such PDF: ${path.basename(absolutePath)}`);
+  const key = `${absolutePath}|${info.mtimeMs}`;
+  const cached = documentInfo.get(key);
+  if (cached) return touch(documentInfo, key, cached);
+
+  const opened = await openPdfium(key, () => readFile(absolutePath));
+  // A rebuilt file gets a new key; close the old version.
+  for (const [oldKey, old] of documentInfo) {
+    if (old.absolutePath !== absolutePath) continue;
+    documentInfo.delete(oldKey);
+    void closePdfium(oldKey);
+  }
+  const loaded = { key, absolutePath, mtimeMs: info.mtimeMs, ...opened };
+  return remember(documentInfo, key, loaded, MAX_DOCUMENT_INFO);
+}
+
+export async function readPdfInfo(input: RpcInput<typeof pdfInfo>, { paseo }: Context): Promise<RpcOutput<typeof pdfInfo>> {
+  const { absolutePath, title, mtimeMs, aspects } = await loadDocument(paseo, input.workspaceId, input.path);
+  return { absolutePath, title, mtimeMs, aspects };
 }
 
 const renderedPages = new Map<string, RpcOutput<typeof renderPage>>();
 const MAX_RENDERED_PAGES = 40;
 
-export async function renderPdfPage(input: RpcInput<typeof renderPage>): Promise<RpcOutput<typeof renderPage>> {
-  const mupdf = await loadMupdf();
-  const { absolutePath, mtimeMs, doc } = await openPdf(input.directory, input.path);
-  const key = `${absolutePath}|${mtimeMs}|${input.page}|${input.width}`;
-  const cached = renderedPages.get(key);
-  if (cached) return touch(renderedPages, key, cached);
+export async function renderPdfPage(
+  input: RpcInput<typeof renderPage>,
+  { paseo }: Context,
+): Promise<RpcOutput<typeof renderPage>> {
+  const document = await loadDocument(paseo, input.workspaceId, input.path);
+  const cacheKey = `${document.key}|${input.page}|${input.width}`;
+  const cached = renderedPages.get(cacheKey);
+  if (cached) return touch(renderedPages, cacheKey, cached);
+  if (input.page >= document.aspects.length) throw new Error(`Page ${input.page + 1} does not exist`);
 
-  if (input.page >= doc.countPages()) throw new Error(`Page ${input.page + 1} does not exist`);
-  const page = doc.loadPage(input.page);
-  const [x0, , x1] = page.getBounds();
-  const scale = input.width / (x1 - x0);
-  const pixmap = page.toPixmap(mupdf.Matrix.scale(scale, scale), mupdf.ColorSpace.DeviceRGB, false, true);
-  const png = pixmap.asPNG();
-  const result = {
-    uri: `data:image/png;base64,${Buffer.from(png).toString("base64")}`,
-    width: pixmap.getWidth(),
-    height: pixmap.getHeight(),
-  };
-  pixmap.destroy();
-  page.destroy();
-  return remember(renderedPages, key, result, MAX_RENDERED_PAGES);
+  const { png, width, height } = await renderPdfium(
+    document.key,
+    () => readFile(document.absolutePath),
+    input.page,
+    input.width,
+  );
+  const result = { uri: `data:image/png;base64,${Buffer.from(png).toString("base64")}`, width, height };
+  return remember(renderedPages, cacheKey, result, MAX_RENDERED_PAGES);
 }
 
 export async function readPdfFileChunk(
   input: RpcInput<typeof readPdfChunk>,
+  { paseo }: Context,
 ): Promise<RpcOutput<typeof readPdfChunk>> {
-  const absolutePath = resolvePdfPath(input.directory, input.path);
+  const absolutePath = await resolvePdf(paseo, input.workspaceId, input.path);
   const file = await open(absolutePath, "r").catch(() => null);
-  if (!file) throw new Error(`No such PDF: ${absolutePath}`);
+  if (!file) throw new Error(`No such PDF: ${path.basename(absolutePath)}`);
   try {
     const info = await file.stat();
     if (info.size > MAX_DOWNLOAD_BYTES) throw new Error("PDF is too large to download through Paseo");
@@ -121,61 +159,6 @@ export async function readPdfFileChunk(
   }
 }
 
-interface OpenDocument {
-  absolutePath: string;
-  mtimeMs: number;
-  doc: Mupdf.Document;
-  aspects: number[];
-}
-
-const openDocuments = new Map<string, OpenDocument>();
-const MAX_OPEN_DOCUMENTS = 4;
-
-async function openPdf(directory: string, requested: string): Promise<OpenDocument> {
-  const absolutePath = resolvePdfPath(directory, requested);
-  const info = await stat(absolutePath).catch(() => null);
-  if (!info?.isFile()) throw new Error(`No such PDF: ${absolutePath}`);
-
-  const cached = openDocuments.get(absolutePath);
-  if (cached && cached.mtimeMs === info.mtimeMs) return touch(openDocuments, absolutePath, cached);
-  if (cached) {
-    cached.doc.destroy();
-    openDocuments.delete(absolutePath);
-  }
-
-  const mupdf = await loadMupdf();
-  const doc = mupdf.Document.openDocument(await readFile(absolutePath), "application/pdf");
-  if (doc.needsPassword()) {
-    doc.destroy();
-    throw new Error("Password-protected PDFs are not supported");
-  }
-  const aspects: number[] = [];
-  for (let index = 0; index < doc.countPages(); index++) {
-    const page = doc.loadPage(index);
-    const [x0, y0, x1, y1] = page.getBounds();
-    page.destroy();
-    aspects.push((x1 - x0) / (y1 - y0 || 1));
-  }
-  const opened = { absolutePath, mtimeMs: info.mtimeMs, doc, aspects };
-  remember(openDocuments, absolutePath, opened, MAX_OPEN_DOCUMENTS, (evicted) => evicted.doc.destroy());
-  return opened;
-}
-
-function resolveDirectory(directory: string): string {
-  return path.resolve(expandHome(directory));
-}
-
-export function resolvePdfPath(directory: string, requested: string): string {
-  const trimmed = requested.trim().replace(/^["']|["']$/g, "");
-  const absolutePath = path.resolve(resolveDirectory(directory), expandHome(trimmed));
-  if (!isPdfName(absolutePath)) throw new Error(`Not a PDF file: ${absolutePath}`);
-  return absolutePath;
-}
-
-function expandHome(value: string): string {
-  return value === "~" || value.startsWith("~/") ? path.join(homedir(), value.slice(1)) : value;
-}
-
 function isPdfName(name: string): boolean {
   return name.toLowerCase().endsWith(".pdf");
 }
@@ -187,24 +170,14 @@ function touch<V>(cache: Map<string, V>, key: string, value: V): V {
   return value;
 }
 
-function remember<V>(
-  cache: Map<string, V>,
-  key: string,
-  value: V,
-  limit: number,
-  onEvict?: (value: V) => void,
-): V {
+function remember<V>(cache: Map<string, V>, key: string, value: V, limit: number): V {
   cache.set(key, value);
-  while (cache.size > limit) {
-    const oldest = cache.keys().next().value as string;
-    onEvict?.(cache.get(oldest) as V);
-    cache.delete(oldest);
-  }
+  while (cache.size > limit) cache.delete(cache.keys().next().value as string);
   return value;
 }
 
 export function closeAllDocuments(): void {
-  for (const { doc } of openDocuments.values()) doc.destroy();
-  openDocuments.clear();
+  documentInfo.clear();
   renderedPages.clear();
+  shutdownPdfium();
 }
